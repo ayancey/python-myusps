@@ -28,12 +28,6 @@ CACHE_PATH = './usps_cache'
 ATTRIBUTION = 'Information provided by www.usps.com'
 USER_AGENT = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) ' \
              'Chrome/41.0.2228.0 Safari/537.36'
-# CHROME_WEBDRIVER_ARGS = [
-#     '--headless', '--user-agent={}'.format(USER_AGENT), '--disable-extensions',
-#     '--disable-gpu', '--no-sandbox'
-# ]
-# FIREFOXOPTIONS = Options()
-# FIREFOXOPTIONS.add_argument("--headless")
 
 
 class USPSError(Exception):
@@ -278,6 +272,7 @@ def get_session(username, password, cookie_path=COOKIE_PATH, cache=True,
             self.username = username
             self.password = password
             self.cookie_path = cookie_path
+            self.driver = driver
 
         def __call__(self, r):
             """Call is no-op."""
