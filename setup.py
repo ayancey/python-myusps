@@ -9,7 +9,8 @@ setup(
     author='happyleaves',
     author_email='happyleaves.tfr@gmail.com',
     packages=find_packages(),
-    install_requires=['lxml==5.2.2', 'python-dateutil==2.6.0', 'requests>=2.20.0', 'requests-cache==0.4.13', 'selenium==3.11.0'],
+    install_requires=['lxml==5.2.2', 'python-dateutil==2.9.0.post0', 'requests>=2.32.3', 'requests-cache==1.2.1',
+                      'playwright==1.44.0'],
     classifiers=[
         'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',

@@ -9,11 +9,7 @@ from dateutil.parser import parse
 import requests
 from requests.auth import AuthBase
 import requests_cache
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException, WebDriverException
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.firefox.options import Options
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,12 +28,12 @@ CACHE_PATH = './usps_cache'
 ATTRIBUTION = 'Information provided by www.usps.com'
 USER_AGENT = 'Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) ' \
              'Chrome/41.0.2228.0 Safari/537.36'
-CHROME_WEBDRIVER_ARGS = [
-    '--headless', '--user-agent={}'.format(USER_AGENT), '--disable-extensions',
-    '--disable-gpu', '--no-sandbox'
-]
-FIREFOXOPTIONS = Options()
-FIREFOXOPTIONS.add_argument("--headless")
+# CHROME_WEBDRIVER_ARGS = [
+#     '--headless', '--user-agent={}'.format(USER_AGENT), '--disable-extensions',
+#     '--disable-gpu', '--no-sandbox'
+# ]
+# FIREFOXOPTIONS = Options()
+# FIREFOXOPTIONS.add_argument("--headless")
 
 
 class USPSError(Exception):
@@ -140,21 +136,8 @@ def _get_mailpiece_url(image):
     """Get mailpiece url."""
     return '{}{}'.format(INFORMED_DELIVERY_IMAGE_URL, image)
 
-def _get_driver(driver_type):
-    """Get webdriver."""
-    if driver_type == 'phantomjs':
-        return webdriver.PhantomJS(service_log_path=os.path.devnull)
-    if driver_type == 'firefox':
-        return webdriver.Firefox(firefox_options=FIREFOXOPTIONS)
-    elif driver_type == 'chrome':
-        chrome_options = webdriver.ChromeOptions()
-        for arg in CHROME_WEBDRIVER_ARGS:
-            chrome_options.add_argument(arg)
-        return webdriver.Chrome(chrome_options=chrome_options)
-    else:
-        raise USPSError('{} not supported'.format(driver_type))
 
-def _login(session):
+def _login(session, driver, headless):
     """Login.
 
     Use Selenium webdriver to login. USPS authenticates users
@@ -170,23 +153,35 @@ def _login(session):
         session.remove_expired_responses()
     except AttributeError:
         pass
-    try:
-        driver = _get_driver(session.auth.driver)
-    except WebDriverException as exception:
-        raise USPSError(str(exception))
-    driver.get(LOGIN_URL)
-    username = driver.find_element_by_name('username')
-    username.send_keys(session.auth.username)
-    password = driver.find_element_by_name('password')
-    password.send_keys(session.auth.password)
-    driver.find_element_by_id('btn-submit').click()
-    try:
-        WebDriverWait(driver, LOGIN_TIMEOUT).until(EC.title_is(WELCOME_TITLE))
-    except TimeoutException:
-        raise USPSError('login failed')
-    for cookie in driver.get_cookies():
-        session.cookies.set(name=cookie['name'], value=cookie['value'])
-    _save_cookies(session.cookies, session.auth.cookie_path)
+
+    with sync_playwright() as p:
+        if driver == "chrome":
+            browser = p.chromium.launch(headless=headless)
+        elif driver == "firefox":
+            browser = p.firefox.launch(headless=headless)
+        elif driver == "webkit":
+            browser = p.webkit.launch(headless=headless)
+        else:
+            raise USPSError('{} not supported'.format(driver))
+
+        context = browser.new_context(user_agent=USER_AGENT)
+        page = context.new_page()
+        page.goto(LOGIN_URL)
+
+        page.locator("xpath=//input[@id='username']").type(session.auth.username)
+        page.locator("xpath=//input[@id='password']").type(session.auth.password)
+
+        page.locator("xpath=//button[@id='btn-submit']").click()
+
+        try:
+            page.wait_for_function("document.title === '{}'".format(WELCOME_TITLE))
+        except PlaywrightTimeoutError:
+            raise USPSError('login failed')
+
+        for cookie in context.cookies():
+            session.cookies.set(name=cookie["name"], value=cookie["value"])
+
+        _save_cookies(session.cookies, session.auth.cookie_path)
 
 
 def _get_dashboard(session, date=None):
@@ -273,17 +268,16 @@ def get_mail(session, date=None):
 
 # pylint: disable=too-many-arguments
 def get_session(username, password, cookie_path=COOKIE_PATH, cache=True,
-                cache_expiry=300, cache_path=CACHE_PATH, driver='phantomjs'):
+                cache_expiry=300, cache_path=CACHE_PATH, driver='chrome', headless=False):
     """Get session, existing or new."""
     class USPSAuth(AuthBase):  # pylint: disable=too-few-public-methods
         """USPS authorization storage."""
 
-        def __init__(self, username, password, cookie_path, driver):
+        def __init__(self, username, password, cookie_path):
             """Init."""
             self.username = username
             self.password = password
             self.cookie_path = cookie_path
-            self.driver = driver
 
         def __call__(self, r):
             """Call is no-op."""
@@ -291,13 +285,12 @@ def get_session(username, password, cookie_path=COOKIE_PATH, cache=True,
 
     session = requests.Session()
     if cache:
-        session = requests_cache.core.CachedSession(cache_name=cache_path,
-                                                    expire_after=cache_expiry)
-    session.auth = USPSAuth(username, password, cookie_path, driver)
+        session = requests_cache.CachedSession(cache_name=cache_path, expire_after=cache_expiry)
+    session.auth = USPSAuth(username, password, cookie_path)
     session.headers.update({'User-Agent': USER_AGENT})
     if os.path.exists(cookie_path):
         _LOGGER.debug("cookie found at: %s", cookie_path)
         session.cookies = _load_cookies(cookie_path)
     else:
-        _login(session)
+        _login(session, driver, headless)
     return session
