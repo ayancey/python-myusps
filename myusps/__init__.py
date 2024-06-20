@@ -4,8 +4,7 @@ import datetime
 import logging
 import os.path
 import pickle
-import re
-from bs4 import BeautifulSoup
+import lxml.html
 from dateutil.parser import parse
 import requests
 from requests.auth import AuthBase
@@ -62,15 +61,15 @@ def _load_cookies(filename):
 def _get_primary_status(row):
     """Get package primary status."""
     try:
-        return row.find('div', {'class': 'pack_h3'}).string
-    except AttributeError:
+        return row.xpath(".//div[contains(@class,'pack_h3')]")[0].text.strip()
+    except IndexError:
         return None
 
 
 def _get_secondary_status(row):
     """Get package secondary status."""
     try:
-        return row.find('div', {'id': 'coltextR3'}).contents[1]
+        return row.xpath(".//div[@id='coltextR3']/text()")[1].strip()
     except (AttributeError, IndexError):
         return None
 
@@ -78,10 +77,10 @@ def _get_secondary_status(row):
 def _get_shipped_from(row):
     """Get where package was shipped from."""
     try:
-        spans = row.find('div', {'id': 'coltextR2'}).find_all('span')
+        spans = row.xpath(".//div[@id='coltextR2']/span")
         if len(spans) < 2:
             return None
-        return spans[1].string
+        return spans[2].text
     except AttributeError:
         return None
 
@@ -89,10 +88,10 @@ def _get_shipped_from(row):
 def _get_status_timestamp(row):
     """Get latest package timestamp."""
     try:
-        divs = row.find('div', {'id': 'coltextR3'}).find_all('div')
+        divs = row.xpath(".//div[@id='coltextR3']/div")
         if len(divs) < 2:
             return None
-        timestamp_string = divs[1].string
+        timestamp_string = divs[1].text
     except AttributeError:
         return None
     try:
@@ -104,8 +103,8 @@ def _get_status_timestamp(row):
 def _get_delivery_date(row):
     """Get delivery date (estimated or actual)."""
     try:
-        month = row.find('div', {'class': 'date-small'}).string
-        day = row.find('div', {'class': 'date-num-large'}).string
+        month = row.xpath(".//div[contains(@class,'date-small')]")[0].text.strip()
+        day = row.xpath(".//div[contains(@class,'date-num-large')]")[0].text.strip()
     except AttributeError:
         return None
     try:
@@ -117,15 +116,15 @@ def _get_delivery_date(row):
 def _get_tracking_number(row):
     """Get package tracking number."""
     try:
-        return row.find('div', {'class': 'pack_h4'}).string
-    except AttributeError:
+        return row.xpath(".//div[@class='pack_h4']")[0].text.strip()
+    except IndexError:
         return None
 
 
 def _get_mailpiece_image(row):
     """Get mailpiece image url."""
     try:
-        return row.find('img', {'class': 'mailpieceIMG'}).get('src')
+        return row.xpath(".//img[@class='mailpieceIMG']/@src")[0]
     except AttributeError:
         return None
 
@@ -223,15 +222,13 @@ def get_profile(session):
     response = session.get(PROFILE_URL, allow_redirects=False)
     if response.status_code == 302:
         raise USPSError('expired session')
-    parsed = BeautifulSoup(response.text, HTML_PARSER)
-    profile = parsed.find('div', {'class': 'atg_store_myProfileInfo'})
+    parsed = lxml.html.fromstring(response.text)
+    profile = parsed.xpath("//div[@class='atg_store_myProfileInfo']")[0]
     data = {}
-    for row in profile.find_all('tr'):
-        cells = row.find_all('td')
+    for row in profile.xpath('.//tr'):
+        cells = row.xpath('.//td')
         if len(cells) == 2:
-            key = ' '.join(cells[0].find_all(text=True)).strip().lower().replace(' ', '_')
-            value = ' '.join(cells[1].find_all(text=True)).strip()
-            data[key] = value
+            data[cells[0].text.strip()] = cells[1].text.strip()
     return data
 
 
@@ -240,9 +237,9 @@ def get_packages(session):
     """Get package data."""
     _LOGGER.info("attempting to get package data")
     response = _get_dashboard(session)
-    parsed = BeautifulSoup(response.text, HTML_PARSER)
+    parsed = lxml.html.fromstring(response.text)
     packages = []
-    for row in parsed.find_all('div', {'class': 'pack_row'}):
+    for row in parsed.xpath("//div[@class='pack_row']"):
         packages.append({
             'tracking_number': _get_tracking_number(row),
             'primary_status': _get_primary_status(row),
@@ -261,9 +258,9 @@ def get_mail(session, date=None):
     if not date:
         date = datetime.datetime.now().date()
     response = _get_dashboard(session, date)
-    parsed = BeautifulSoup(response.text, HTML_PARSER)
+    parsed = lxml.html.fromstring(response.text)
     mail = []
-    for row in parsed.find_all('div', {'class': 'mailpiece'}):
+    for row in parsed.xpath("//div[@class='mailpiece']"):
         image = _get_mailpiece_image(row)
         if not image:
             continue
