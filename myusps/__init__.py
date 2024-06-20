@@ -272,7 +272,6 @@ def get_session(username, password, cookie_path=COOKIE_PATH, cache=True,
             self.username = username
             self.password = password
             self.cookie_path = cookie_path
-            self.driver = driver
 
         def __call__(self, r):
             """Call is no-op."""
